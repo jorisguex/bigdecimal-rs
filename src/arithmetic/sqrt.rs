@@ -78,66 +78,18 @@ fn get_rounding_term_uint(num: &BigUint) -> u8 {
 }
 
 pub(crate) fn impl_sqrt(n: &BigUint, scale: i64, ctx: &Context) -> BigDecimal {
-    // make guess
-    let guess = {
-        let magic_guess_scale = 1.1951678538495576_f64;
-        let initial_guess = (n.bits() as f64 - scale as f64 * LOG2_10) / 2.0;
-        let res = magic_guess_scale * exp2(initial_guess);
-
-        if res.is_normal() {
-            BigDecimal::try_from(res).unwrap()
-        } else {
-            // can't guess with float - just guess magnitude
-            let scale = (n.bits() as f64 / -LOG2_10 + scale as f64).round() as i64;
-            BigDecimal::new(BigInt::from(1), scale / 2)
-        }
-    };
-
-    // // wikipedia example - use for testing the algorithm
-    // if self == &BigDecimal::from_str("125348").unwrap() {
-    //     running_result = BigDecimal::from(600)
-    // }
-
-    // TODO: Use context variable to set precision
-    let max_precision = ctx.precision().get();
-
-    let next_iteration = move |r: BigDecimal| {
-        // division needs to be precise to (at least) one extra digit
-        let tmp = impl_division(
-            n.clone(),
-            r.int_val.magnitude(),
-            scale - r.scale,
-            max_precision + 1,
-        );
-
-        // half will increase precision on each iteration
-        (tmp + r).half()
-    };
-
-    // calculate first iteration
-    let mut running_result = next_iteration(guess);
-
-    let mut prev_result = BigDecimal::one();
-    let mut result = BigDecimal::zero();
-
-    // TODO: Prove that we don't need to arbitrarily limit iterations
-    // and that convergence can be calculated
-    while prev_result != result {
-        // store current result to test for convergence
-        prev_result = result;
-
-        // calculate next iteration
-        running_result = next_iteration(running_result);
-
-        // 'result' has clipped precision, 'running_result' has full precision
-        result = if running_result.digits() > max_precision {
-            running_result.with_prec(max_precision)
-        } else {
-            running_result.clone()
-        };
-    }
-
-    result
+    let num_digits = n.to_radix_le(10).len() as u64;
+    let scale_diff = scale -  num_digits as i64;
+    let precision: u64 = ctx.precision().into();
+    let wanted_digits = 2*precision + 2;
+    let exponent = wanted_digits.saturating_sub(num_digits) + u64::from(scale_diff.is_odd());
+    let result_digits = (n * BigUint::from(10_u32).pow(exponent as u32)).sqrt();
+    let div = result_digits.to_string().len().saturating_sub(precision as usize);
+    let factor = BigUint::from(10_u32).pow(div as u32);
+    let (mut results_val, rem) = result_digits.div_rem(&factor);
+    results_val += get_rounding_term_uint(&rem);
+    let result_scale = (precision as f32 + scale_diff as f32 / 2.0 - 0.25).round() as i64;
+    BigDecimal::new(results_val.into(), result_scale)
 }
 
 
