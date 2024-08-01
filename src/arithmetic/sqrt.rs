@@ -79,13 +79,13 @@ fn get_rounding_term_uint(num: &BigUint) -> u8 {
 
 pub(crate) fn impl_sqrt(n: &BigUint, scale: i64, ctx: &Context) -> BigDecimal {
     let num_digits = n.to_radix_le(10).len() as u64;
-    let scale_diff = scale -  num_digits as i64;
-    let precision: u64 = ctx.precision().into();
+    let scale_diff = scale - num_digits as i64;
+    let precision = ctx.precision().get();
     let wanted_digits = 2*precision + 2;
     let exponent = wanted_digits.saturating_sub(num_digits) + u64::from(scale_diff.is_odd());
-    let result_digits = (n * BigUint::from(10_u32).pow(exponent as u32)).sqrt();
-    let div = result_digits.to_string().len().saturating_sub(precision as usize);
-    let factor = BigUint::from(10_u32).pow(div as u32);
+    let result_digits = (n * BigUint::from(10_u32).pow(exponent)).sqrt();
+    let div = result_digits.to_radix_le(10).len().saturating_sub(precision as usize);
+    let factor = BigUint::from(10_u32).pow(div);
     let (mut results_val, rem) = result_digits.div_rem(&factor);
     results_val += get_rounding_term_uint(&rem);
     let result_scale = (precision as f32 + scale_diff as f32 / 2.0 - 0.25).round() as i64;
@@ -100,6 +100,7 @@ mod test {
     #[test]
     fn test_sqrt() {
         let vals = vec![
+            ("0", "0"),
             ("1e-232", "1e-116"),
             ("1.00", "1"),
             ("1.001", "1.000499875062460964823258287700109753027590031219780479551442971840836093890879944856933288426795152"),
