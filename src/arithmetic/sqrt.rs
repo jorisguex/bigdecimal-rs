@@ -1,7 +1,8 @@
 //! square root implementation
 
-use crate::*;
+use num_traits::ToPrimitive;
 
+use crate::*;
 
 fn impl_division(mut num: BigUint, den: &BigUint, mut scale: i64, max_precision: u64) -> BigDecimal {
     use Sign::Plus;
@@ -78,20 +79,38 @@ fn get_rounding_term_uint(num: &BigUint) -> u8 {
 }
 
 pub(crate) fn impl_sqrt(n: &BigUint, scale: i64, ctx: &Context) -> BigDecimal {
-    let num_digits = n.to_radix_le(10).len() as u64;
-    let scale_diff = scale - num_digits as i64;
-    let precision = ctx.precision().get();
-    let wanted_digits = 2*precision + 2;
-    let exponent = wanted_digits.saturating_sub(num_digits) + u64::from(scale_diff.is_odd());
-    let result_digits = (n * BigUint::from(10_u32).pow(exponent)).sqrt();
-    let div = result_digits.to_radix_le(10).len().saturating_sub(precision as usize);
-    let factor = BigUint::from(10_u32).pow(div);
-    let (mut results_val, rem) = result_digits.div_rem(&factor);
-    results_val += get_rounding_term_uint(&rem);
-    let result_scale = (precision as f32 + scale_diff as f32 / 2.0 - 0.25).round() as i64;
-    BigDecimal::new(results_val.into(), result_scale)
-}
+    // Calculate the number of digits and the difference compared to the scale
+    let num_digits = count_decimal_digits_uint(&n);
+    let scale_diff = i128::from(num_digits) - i128::from(scale);
 
+    // Calculate the number of wanted digits and the exponent we need to raise the original value to
+    // We want twice as many digits as the precision because sqrt halves the number of digits
+    // We add an extra one for rounding purposes
+    let prec = ctx.precision().get();
+    let wanted_digits = 2 * (prec + 1);
+    let exponent = wanted_digits.saturating_sub(num_digits) + u64::from(scale_diff.is_odd());
+    let sqrt_digits = (n * ten_to_the_uint(exponent)).sqrt();
+
+    // Divide the value so it has the correct precision requested
+    // TODO: Add correct rounding
+    let divisor = count_decimal_digits_uint(&sqrt_digits).saturating_sub(prec);
+    let divisor_power = ten_to_the_uint(divisor);
+    let (mut results_val, rem) = sqrt_digits.div_rem(&divisor_power);
+    results_val += get_rounding_term_uint(&rem);
+
+    // Calculate the scale of the result
+    let result_scale_digits = 4 * BigInt::from(prec) - 2 * BigInt::from(scale_diff) - 1;
+    let result_scale_decimal: BigDecimal = BigDecimal::new(result_scale_digits, 0) / 4.0;
+    let mut result_scale: BigInt = result_scale_decimal.with_scale_round(0, RoundingMode::HalfEven).int_val;
+
+    // If there any trailing zeros, translate them from the digits to the scale
+    let trailing_zeros = results_val.to_radix_le(10).iter().take_while(|c| c.is_zero()).count();
+    results_val /= ten_to_the_uint(trailing_zeros as u64);
+    result_scale -= trailing_zeros;
+
+    // Return the result - panics if the scale does not fit in i64
+    BigDecimal::new(results_val.into(), result_scale.to_i64().unwrap())
+}
 
 #[cfg(test)]
 mod test {
@@ -157,17 +176,13 @@ mod test {
 
         let digitref = d.to_ref();
         let (_, scale, uint) = digitref.as_parts();
-        let ctx = Context::default()
-                          .with_prec(11).unwrap()
-                          .with_rounding_mode(RoundingMode::Down);
+        let ctx = Context::default().with_prec(11).unwrap().with_rounding_mode(RoundingMode::Down);
 
         let s = impl_sqrt(uint, scale, &ctx);
         let expected: BigDecimal = "18.005704236".parse().unwrap();
         assert_eq!(s, expected);
 
-        let ctx = Context::default()
-                          .with_prec(31).unwrap()
-                          .with_rounding_mode(RoundingMode::Up);
+        let ctx = Context::default().with_prec(31).unwrap().with_rounding_mode(RoundingMode::Up);
 
         let s = impl_sqrt(uint, scale, &ctx);
         let expected: BigDecimal = "18.00570423639090823994825477228".parse().unwrap();
@@ -180,9 +195,7 @@ mod test {
 
         let digitref = d.to_ref();
         let (_, scale, uint) = digitref.as_parts();
-        let ctx = Context::default()
-                          .with_prec(25).unwrap()
-                          .with_rounding_mode(RoundingMode::Down);
+        let ctx = Context::default().with_prec(25).unwrap().with_rounding_mode(RoundingMode::Down);
 
         let s = impl_sqrt(uint, scale, &ctx);
         let expected: BigDecimal = "0.00002254998889653906459324292".parse().unwrap();
