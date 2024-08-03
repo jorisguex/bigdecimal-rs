@@ -1,7 +1,5 @@
 //! square root implementation
 
-use num_traits::ToPrimitive;
-
 use crate::*;
 
 fn impl_division(mut num: BigUint, den: &BigUint, mut scale: i64, max_precision: u64) -> BigDecimal {
