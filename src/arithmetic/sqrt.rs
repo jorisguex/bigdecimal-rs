@@ -89,25 +89,15 @@ pub(crate) fn impl_sqrt(n: &BigUint, scale: i64, ctx: &Context) -> BigDecimal {
     let exponent = wanted_digits.saturating_sub(num_digits) + u64::from(scale_diff.is_odd());
     let sqrt_digits = (n * ten_to_the_uint(exponent)).sqrt();
 
-    // Divide the value so it has the correct precision requested
-    // TODO: Add correct rounding
-    let divisor = count_decimal_digits_uint(&sqrt_digits).saturating_sub(prec);
-    let divisor_power = ten_to_the_uint(divisor);
-    let (mut results_val, rem) = sqrt_digits.div_rem(&divisor_power);
-    results_val += get_rounding_term_uint(&rem);
-
     // Calculate the scale of the result
     let result_scale_digits = 4 * BigInt::from(prec) - 2 * BigInt::from(scale_diff) - 1;
     let result_scale_decimal: BigDecimal = BigDecimal::new(result_scale_digits, 0) / 4.0;
-    let mut result_scale: BigInt = result_scale_decimal.with_scale_round(0, RoundingMode::HalfEven).int_val;
+    let mut result_scale = result_scale_decimal.with_scale_round(0, RoundingMode::HalfEven).int_val;
 
-    // If there any trailing zeros, translate them from the digits to the scale
-    let trailing_zeros = results_val.to_radix_le(10).iter().take_while(|c| c.is_zero()).count();
-    results_val /= ten_to_the_uint(trailing_zeros as u64);
-    result_scale -= trailing_zeros;
-
-    // Return the result - panics if the scale does not fit in i64
-    BigDecimal::new(results_val.into(), result_scale.to_i64().unwrap())
+    // Round the value so it has the correct precision requested
+    result_scale += count_decimal_digits_uint(&sqrt_digits).saturating_sub(prec);
+    let unrounded_result = BigDecimal::new(sqrt_digits.into(), result_scale.to_i64().unwrap());
+    unrounded_result.with_precision_round(ctx.precision(), ctx.rounding_mode())
 }
 
 #[cfg(test)]
@@ -165,6 +155,38 @@ mod test {
 
             let sqrt = BigDecimal::new(BigInt::from_str(s).unwrap(), scale).sqrt().unwrap();
             assert_eq!(sqrt, expected);
+        }
+    }
+
+    #[test]
+    fn test_sqrt_rounding() {
+        let vals = vec![
+            // sqrt(1.21) = 1.1, [Ceiling, Up] should round up
+            ("1.21", "2", "1", "1", "1", "1", "1", "2"),
+            // sqrt(2.25) = 1.5, [Ceiling, HalfEven, HalfUp, Up] should round up
+            ("2.25", "2", "1", "1", "1", "2", "2", "2"),
+            // sqrt(6.25) = 2.5, [Ceiling, HalfUp, Up] should round up
+            ("6.25", "3", "2", "2", "2", "2", "3", "3"),
+            // sqrt(8.41) = 2.9, [Ceiling, HalfDown, HalfEven, HalfUp, Up] should round up
+            ("8.41", "3", "2", "2", "3", "3", "3", "3"),
+        ];
+        for &(val, ceiling, down, floor, half_down, half_even, half_up, up) in vals.iter() {
+            let val = BigDecimal::from_str(val).unwrap();
+            let ceiling = BigDecimal::from_str(ceiling).unwrap();
+            let down = BigDecimal::from_str(down).unwrap();
+            let floor = BigDecimal::from_str(floor).unwrap();
+            let half_down = BigDecimal::from_str(half_down).unwrap();
+            let half_even = BigDecimal::from_str(half_even).unwrap();
+            let half_up = BigDecimal::from_str(half_up).unwrap();
+            let up = BigDecimal::from_str(up).unwrap();
+            let ctx = Context::default().with_prec(1).unwrap();
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::Ceiling)).unwrap(), ceiling);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::Down)).unwrap(), down);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::Floor)).unwrap(), floor);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::HalfDown)).unwrap(), half_down);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::HalfEven)).unwrap(), half_even);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::HalfUp)).unwrap(), half_up);
+            assert_eq!(val.sqrt_with_context(&ctx.with_rounding_mode(RoundingMode::Up)).unwrap(), up);
         }
     }
 
